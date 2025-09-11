@@ -1,0 +1,5 @@
+{
+  "name": "Carrom Tournament Manager",
+  "description": "A web application to manage Carrom tournaments, including teams, players, matches, and a points table. It features data persistence and allows exporting results to CSV.",
+  "requestFramePermissions": []
+}
