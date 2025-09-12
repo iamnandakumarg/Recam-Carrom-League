@@ -1,4 +1,10 @@
 
+export interface User {
+  id: string;
+  email: string;
+  password?: string; // Stored in plaintext for this demo. Use hashing in a real app.
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -50,29 +56,19 @@ export interface Match {
   endTime?: string;
 }
 
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-
-export interface Permissions {
-  canEditTeams: boolean;
-  canEditMatches: boolean;
-  canFinalizeResults: boolean;
-}
+export type CollaboratorRole = 'editor' | 'viewer';
 
 export interface Tournament {
   id: string;
   name: string;
   stage: 'league' | 'playoffs' | 'completed';
-  adminId: string;
-  inviteCode: string;
-  users: User[];
-  permissions: Record<string, Permissions>;
   groups: Group[];
   teams: Team[];
   matches: Match[];
+  // New fields for auth and collaboration
+  ownerId: string;
+  inviteCode: string;
+  collaborators: Array<{ userId: string; role: CollaboratorRole }>;
 }
 
 export enum View {

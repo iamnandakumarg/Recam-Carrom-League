@@ -1,6 +1,7 @@
 
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Match, Team, Permissions, Tournament } from '../types';
+import { Match, Team, Tournament } from '../types';
 import Modal from './Modal';
 
 // Declare XLSX library provided by CDN
@@ -18,7 +19,7 @@ interface MatchesManagerProps {
   onUpdateLiveScore: (matchId: string, playerId: string, points: number, isQueen: boolean) => void;
   onAddMatchesBatch: (matches: Array<{ team1Id: string, team2Id: string, date: string }>) => void;
   onEndLeagueStage: () => void;
-  permissions: Permissions;
+  readOnly: boolean;
 }
 
 const CrownIcon = () => (
@@ -43,7 +44,7 @@ const formatDuration = (start?: string, end?: string): string => {
     return durationString;
 };
 
-const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournament, onAddMatch, onDeleteMatch, onUpdateMatchResult, onEditMatch, onStartMatch, onUpdateLiveScore, onAddMatchesBatch, onEndLeagueStage, permissions }) => {
+const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournament, onAddMatch, onDeleteMatch, onUpdateMatchResult, onEditMatch, onStartMatch, onUpdateLiveScore, onAddMatchesBatch, onEndLeagueStage, readOnly }) => {
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isResultModalOpen, setResultModalOpen] = useState(false);
   const [isEditModalOpen, setEditModalOpen] = useState(false);
@@ -285,28 +286,28 @@ const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournam
   const upcomingMatches = leagueMatches.filter(m => m.status === 'upcoming').sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const inProgressMatches = leagueMatches.filter(m => m.status === 'inprogress').sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const completedMatches = leagueMatches.filter(m => m.status === 'completed').sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const canEditMatches = permissions.canEditMatches;
-  const canFinalize = permissions.canFinalizeResults;
 
   return (
     <div className="space-y-8">
       <div className="flex flex-col sm:flex-row justify-between items-center bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md gap-4">
         <h2 className="text-3xl font-bold text-cyan-600 dark:text-cyan-400 self-start sm:self-center">League Matches</h2>
-        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-             <button onClick={handleDownloadTemplate} className="bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-                Download Template
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} disabled={!canEditMatches} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Upload Schedule
-            </button>
-            <button onClick={() => setAddModalOpen(true)} disabled={!canEditMatches} className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              Schedule Match
-            </button>
-            <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} accept=".xlsx, .xls" />
-        </div>
+        {!readOnly && (
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                <button onClick={handleDownloadTemplate} className="bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Download Template
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Upload Schedule
+                </button>
+                <button onClick={() => setAddModalOpen(true)} className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                Schedule Match
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} accept=".xlsx, .xls" />
+            </div>
+        )}
       </div>
       
-      {tournament.stage === 'league' && (
+      {tournament.stage === 'league' && !readOnly && (
         <div className="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md text-center">
             <button
                 onClick={onEndLeagueStage}
@@ -351,13 +352,14 @@ const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournam
                         <span>{new Date(match.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                       </div>
                     </div>
-                    <button 
-                        onClick={() => handleOpenResultModal(match)}
-                        disabled={!canFinalize}
-                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Finalize Result
-                    </button>
+                    {!readOnly && (
+                        <button 
+                            onClick={() => handleOpenResultModal(match)}
+                            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors w-full sm:w-auto"
+                        >
+                        Finalize Result
+                        </button>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 dark:bg-slate-700/50 p-4 rounded-lg">
@@ -374,21 +376,21 @@ const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournam
                                    <div className="flex items-center gap-2">
                                       <button 
                                           onClick={() => onUpdateLiveScore(match.id, player.id, 1, false)}
-                                          disabled={!canFinalize}
+                                          disabled={readOnly}
                                           className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                           Coin
                                       </button>
                                       <button
                                           onClick={() => onUpdateLiveScore(match.id, player.id, 3, true)}
-                                          disabled={!!match.queenPocketedBy || !canFinalize}
+                                          disabled={!!match.queenPocketedBy || readOnly}
                                           className="bg-amber-400 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
                                       >
                                           Queen
                                       </button>
                                        <button 
                                           onClick={() => onUpdateLiveScore(match.id, player.id, -1, false)}
-                                          disabled={!canFinalize}
+                                          disabled={readOnly}
                                           className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                       >
                                           Foul
@@ -436,15 +438,17 @@ const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournam
                     <span>{new Date(match.date).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span>
                 </div>
               </div>
-              <div className="flex items-center space-x-2 self-end sm:self-auto">
-                <button onClick={() => onStartMatch(match.id)} disabled={!canEditMatches} className="bg-cyan-600 hover:bg-cyan-700 text-white py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Start Match</button>
-                <button onClick={() => handleOpenEditModal(match)} disabled={!canEditMatches} className="text-gray-500 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors p-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
-                </button>
-                <button onClick={() => onDeleteMatch(match.id)} disabled={!canEditMatches} className="text-gray-500 hover:text-red-500 transition-colors p-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                </button>
-              </div>
+              {!readOnly && (
+                <div className="flex items-center space-x-2 self-end sm:self-auto">
+                    <button onClick={() => onStartMatch(match.id)} className="bg-cyan-600 hover:bg-cyan-700 text-white py-1 px-3 rounded text-sm transition-colors">Start Match</button>
+                    <button onClick={() => handleOpenEditModal(match)} className="text-gray-500 hover:text-cyan-500 dark:hover:text-cyan-400 transition-colors p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+                    </button>
+                    <button onClick={() => onDeleteMatch(match.id)} className="text-gray-500 hover:text-red-500 transition-colors p-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    </button>
+                </div>
+              )}
             </div>
           )})}
         </div>
@@ -492,11 +496,13 @@ const MatchesManager: React.FC<MatchesManagerProps> = ({ matches, teams, tournam
                                     )}
                                 </div>
                           </div>
-                          <div className="flex items-center space-x-2 self-end sm:self-auto">
-                                <button onClick={() => onDeleteMatch(match.id)} disabled={!canFinalize} className="text-gray-500 hover:text-red-500 transition-colors p-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                          {!readOnly && (
+                            <div className="flex items-center space-x-2 self-end sm:self-auto">
+                                <button onClick={() => onDeleteMatch(match.id)} className="text-gray-500 hover:text-red-500 transition-colors p-1">
                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                 </button>
-                          </div>
+                            </div>
+                          )}
                       </div>
                   )})}
               </div>

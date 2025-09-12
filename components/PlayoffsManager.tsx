@@ -1,7 +1,7 @@
 
 
 import React, { useState, useMemo } from 'react';
-import { Tournament, Match, Team, Permissions } from '../types';
+import { Tournament, Match, Team } from '../types';
 import Modal from './Modal';
 
 interface PlayoffsManagerProps {
@@ -10,7 +10,7 @@ interface PlayoffsManagerProps {
   onEditMatch: (matchId: string, newDate: string) => void;
   onStartMatch: (matchId: string) => void;
   onUpdateLiveScore: (matchId: string, playerId: string, points: number, isQueen: boolean) => void;
-  permissions: Permissions;
+  readOnly: boolean;
 }
 
 const CrownIcon = () => (
@@ -36,7 +36,7 @@ const TeamDisplay: React.FC<{ team: Team | undefined | 'TBD'; placeholder: strin
     );
 };
 
-const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateMatchResult, onEditMatch, onStartMatch, onUpdateLiveScore, permissions }) => {
+const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateMatchResult, onEditMatch, onStartMatch, onUpdateLiveScore, readOnly }) => {
     const { teams, matches } = tournament;
     const [isResultModalOpen, setResultModalOpen] = useState(false);
     const [isEditModalOpen, setEditModalOpen] = useState(false);
@@ -127,19 +127,22 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                     {new Date(match.date).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
                 </div>
 
-                <div className="flex items-center space-x-2 pt-2">
-                    {match.status === 'upcoming' && (
-                        <button onClick={() => onStartMatch(match.id)} disabled={!canStart || !permissions.canEditMatches} className="bg-cyan-600 hover:bg-cyan-700 text-white py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Start</button>
-                    )}
-                    {match.status === 'inprogress' && (
-                        <button onClick={() => handleOpenResultModal(match)} disabled={!permissions.canFinalizeResults} className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Finalize</button>
-                    )}
-                     {match.status !== 'completed' && (
-                        <button onClick={() => handleOpenEditModal(match)} disabled={!permissions.canEditMatches} className="text-gray-500 hover:text-cyan-500 p-1 disabled:opacity-50">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
-                        </button>
-                    )}
-                </div>
+                {!readOnly && (
+                    <div className="flex items-center space-x-2 pt-2">
+                        {match.status === 'upcoming' && (
+                            <button onClick={() => onStartMatch(match.id)} disabled={!canStart} className="bg-cyan-600 hover:bg-cyan-700 text-white py-1 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Start</button>
+                        )}
+                        {match.status === 'inprogress' && (
+                            <button onClick={() => handleOpenResultModal(match)} className="bg-green-600 hover:bg-green-700 text-white py-1 px-3 rounded text-sm transition-colors">Finalize</button>
+                        )}
+                        {match.status !== 'completed' && (
+                            <button onClick={() => handleOpenEditModal(match)} className="text-gray-500 hover:text-cyan-500 p-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
+                            </button>
+                        )}
+                    </div>
+                )}
+
 
                 {match.status === 'inprogress' && team1 && team2 && typeof team1 !== 'string' && typeof team2 !== 'string' && (
                     <div className="grid grid-cols-1 gap-4 bg-gray-50 dark:bg-slate-700/50 p-4 rounded-lg mt-4">
@@ -153,29 +156,29 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                                     return (
                                         <div key={player.id} className="flex flex-wrap items-center justify-between gap-2 bg-white dark:bg-slate-800 p-2 rounded-md border border-gray-200 dark:border-slate-700 text-sm">
                                         <span>{player.name} - <span className="font-bold">{liveScore} pts</span></span>
-                                        <div className="flex items-center gap-1">
-                                            <button
-                                                onClick={() => onUpdateLiveScore(match.id, player.id, 1, false)}
-                                                disabled={!permissions.canFinalizeResults}
-                                                className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-1 px-2 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                Coin
-                                            </button>
-                                            <button
-                                                onClick={() => onUpdateLiveScore(match.id, player.id, 3, true)}
-                                                disabled={!!match.queenPocketedBy || !permissions.canFinalizeResults}
-                                                className="bg-amber-400 hover:bg-amber-500 text-white font-bold py-1 px-2 rounded text-xs transition-colors disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
-                                            >
-                                                Queen
-                                            </button>
-                                            <button
-                                                onClick={() => onUpdateLiveScore(match.id, player.id, -1, false)}
-                                                disabled={!permissions.canFinalizeResults}
-                                                className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                            >
-                                                Foul
-                                            </button>
-                                        </div>
+                                        {!readOnly && (
+                                            <div className="flex items-center gap-1">
+                                                <button
+                                                    onClick={() => onUpdateLiveScore(match.id, player.id, 1, false)}
+                                                    className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-1 px-2 rounded text-xs transition-colors"
+                                                >
+                                                    Coin
+                                                </button>
+                                                <button
+                                                    onClick={() => onUpdateLiveScore(match.id, player.id, 3, true)}
+                                                    disabled={!!match.queenPocketedBy}
+                                                    className="bg-amber-400 hover:bg-amber-500 text-white font-bold py-1 px-2 rounded text-xs transition-colors disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed"
+                                                >
+                                                    Queen
+                                                </button>
+                                                <button
+                                                    onClick={() => onUpdateLiveScore(match.id, player.id, -1, false)}
+                                                    className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 rounded text-xs transition-colors"
+                                                >
+                                                    Foul
+                                                </button>
+                                            </div>
+                                        )}
                                         </div>
                                     );
                                 })}
@@ -246,12 +249,10 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                             <div className="mt-2 space-y-2">
                                <label className="flex items-center">
                                    <input type="radio" name="winner" value={selectedMatch.team1Id} checked={winnerId === selectedMatch.team1Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
-                                   {/* FIX: Check if team is an object before accessing .name */}
                                    <span className="ml-2">{team1 && typeof team1 !== 'string' ? team1.name : ''}</span>
                                </label>
                                <label className="flex items-center">
                                    <input type="radio" name="winner" value={selectedMatch.team2Id} checked={winnerId === selectedMatch.team2Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
-                                   {/* FIX: Check if team is an object before accessing .name */}
                                    <span className="ml-2">{team2 && typeof team2 !== 'string' ? team2.name : ''}</span>
                                </label>
                             </div>

@@ -1,28 +1,25 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Tournament, Team, Player, Match, View, Group, Permissions, User } from '../types';
+
+import React, { useState, useMemo } from 'react';
+import { Tournament, Team, Player, Match, View, Group, User, CollaboratorRole } from '../types';
 import TeamsManager from './TeamsManager';
 import MatchesManager from './MatchesManager';
 import PointsTable from './PointsTable';
 import SuperStrikerPage from './SuperStrikerPage';
-import UsersManager from './UsersManager';
 import PlayoffsManager from './PlayoffsManager';
 import ConfirmationModal from './ConfirmationModal';
-import { api } from '../utils/api';
+import UsersManager from './UsersManager';
 
 interface TournamentDashboardProps {
-  tournamentId: string;
+  tournament: Tournament;
+  onUpdateTournament: (tournament: Tournament) => void;
   onBack: () => void;
-  currentUserId: string;
+  currentUser: User;
+  users: User[];
+  onUpdateCollaboratorRole: (tournamentId: string, userId: string, role: CollaboratorRole) => void;
+  onRemoveCollaborator: (tournamentId: string, userId: string) => void;
 }
 
-const teamColors = [
-  '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#ec4899'
-];
-
-const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId, onBack, currentUserId }) => {
-  const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, onUpdateTournament, onBack, currentUser, users, onUpdateCollaboratorRole, onRemoveCollaborator }) => {
   const [activeView, setActiveView] = useState<View>(View.TABLE);
 
   const [confirmState, setConfirmState] = useState<{
@@ -32,240 +29,326 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
     onConfirm: () => void;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
   
-  const refreshTournamentData = useCallback(async () => {
-    try {
-        setIsLoading(true);
-        const data = await api.getTournament(tournamentId);
-        if (data) {
-            setTournament(data);
-            if (data.stage === 'playoffs' && activeView !== View.PLAYOFFS) {
-                setActiveView(View.PLAYOFFS);
-            }
-        } else {
-            setError('Tournament not found.');
-        }
-    } catch (err) {
-        setError('Failed to load tournament data.');
-        console.error(err);
-    } finally {
-        setIsLoading(false);
-    }
-  }, [tournamentId, activeView]);
-
-  useEffect(() => {
-      refreshTournamentData();
-  }, [refreshTournamentData]);
-
-
-  const isCurrentUserAdmin = tournament?.adminId === currentUserId;
-
-  const userPermissions: Permissions = useMemo(() => {
-    if (!tournament) return { canEditTeams: false, canEditMatches: false, canFinalizeResults: false };
-    return tournament.permissions[currentUserId] || {
-      canEditTeams: false,
-      canEditMatches: false,
-      canFinalizeResults: false,
-    };
-  }, [tournament, currentUserId]);
-
-  const currentUser: User | undefined = useMemo(() => {
-      return tournament?.users.find(u => u.id === currentUserId);
-  }, [tournament?.users, currentUserId]);
+  const userRole = useMemo(() => {
+    if (tournament.ownerId === currentUser.id) return 'owner';
+    const collaborator = tournament.collaborators.find(c => c.userId === currentUser.id);
+    return collaborator?.role || 'none'; // 'none' if not owner or collaborator
+  }, [tournament, currentUser]);
   
-  const handleApiCall = async (apiCall: Promise<Tournament | void>, successMessage?: string, errorMessage?: string) => {
-      try {
-          const result = await apiCall;
-          // If the api call returns the updated tournament, set it directly.
-          // This is more performant and prevents the page from jumping to the top.
-          if (result) {
-              setTournament(result);
-          } else {
-              // Otherwise, do a full refresh. This is a fallback for operations
-              // that might not return the updated state.
-              await refreshTournamentData();
-          }
-          
-          if (successMessage) console.log(successMessage);
-      } catch (err) {
-          console.error(err);
-          alert(errorMessage || 'An error occurred.');
-      }
-  };
+  const readOnly = userRole === 'viewer';
 
-  const onUpdateTournament = (id: string, updater: (current: Tournament) => Tournament) => {
-      handleApiCall(api.updateTournament(id, updater));
-  }
+  // Clone, mutate, and update pattern for all handlers
+  const withUpdate = (mutator: (t: Tournament) => void) => {
+    const updatedTournament = JSON.parse(JSON.stringify(tournament));
+    mutator(updatedTournament);
+    onUpdateTournament(updatedTournament);
+  };
   
   // --- Handlers ---
   const handleAddTeam = (teamName: string, color: string, groupId: string, playerNames: string[], logo: string | null) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-        const newPlayers = playerNames.map(name => ({ id: crypto.randomUUID(), name, score: 0, coins: 0, queens: 0, matchesPlayed: 0 }));
-        const newTeam: Team = { id: crypto.randomUUID(), name: teamName, color, logo: logo || undefined, groupId, players: newPlayers, matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: [] };
-        t.teams.push(newTeam);
-        return t;
-    }));
+    withUpdate(t => {
+      const newTeam: Team = {
+        id: crypto.randomUUID(),
+        name: teamName,
+        color,
+        logo: logo || undefined,
+        groupId,
+        players: playerNames.map(name => ({ id: crypto.randomUUID(), name, score: 0, coins: 0, queens: 0, matchesPlayed: 0 })),
+        matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: [],
+      };
+      t.teams.push(newTeam);
+    });
   };
   
-   const handleAddTeamsBatch = (teamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }>) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-      const existingGroupNames = new Map(t.groups.map(g => [g.name.toLowerCase(), g.id]));
-      teamsData.forEach(({ groupName, teamName, playerNames }) => {
-          let groupId = existingGroupNames.get(groupName.toLowerCase());
-          if (!groupId) {
-              const newGroup = { id: crypto.randomUUID(), name: groupName };
-              t.groups.push(newGroup);
-              groupId = newGroup.id;
-              existingGroupNames.set(groupName.toLowerCase(), groupId);
-          }
-          const newPlayers = playerNames.map(name => ({ id: crypto.randomUUID(), name, score: 0, coins: 0, queens: 0, matchesPlayed: 0 }));
-          const color = teamColors[t.teams.length % teamColors.length];
-          const newTeam: Team = { id: crypto.randomUUID(), name: teamName, color, groupId, players: newPlayers, matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: [] };
-          t.teams.push(newTeam);
-      });
-      return t;
-    }));
+  const handleAddTeamsBatch = (teamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }>) => {
+    withUpdate(t => {
+        teamsData.forEach((teamData, index) => {
+            let group = t.groups.find((g: Group) => g.name.toLowerCase() === teamData.groupName.toLowerCase());
+            if (!group) {
+                group = { id: crypto.randomUUID(), name: teamData.groupName };
+                t.groups.push(group);
+            }
+            const color = teamColors[ (t.teams.length + index) % teamColors.length];
+            const newTeam: Team = {
+                 id: crypto.randomUUID(),
+                 name: teamData.teamName,
+                 color,
+                 groupId: group.id,
+                 players: teamData.playerNames.map(name => ({ id: crypto.randomUUID(), name, score: 0, coins: 0, queens: 0, matchesPlayed: 0 })),
+                 matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: [],
+            };
+            t.teams.push(newTeam);
+        });
+    });
   };
 
   const handleDeleteTeam = (teamId: string) => {
-    if (!userPermissions.canEditTeams) return;
     setConfirmState({
       isOpen: true, title: 'Delete Team',
       message: 'Are you sure you want to delete this team? All associated matches will also be removed.',
-      onConfirm: () => handleApiCall(api.deleteTeam(tournamentId, teamId))
+      onConfirm: () => withUpdate(t => {
+        t.teams = t.teams.filter((team: Team) => team.id !== teamId);
+        t.matches = t.matches.filter((m: Match) => m.team1Id !== teamId && m.team2Id !== teamId);
+      })
     });
   };
   
-    const handleEditTeam = (teamId: string, updates: { name: string; color: string; logo: string | null | undefined; groupId: string; players: Player[]; }) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-        const teamIndex = t.teams.findIndex(team => team.id === teamId);
-        if(teamIndex > -1) {
-            t.teams[teamIndex] = { ...t.teams[teamIndex], ...updates, logo: updates.logo || undefined };
+  const handleEditTeam = (teamId: string, updates: { name: string; color: string; logo: string | null | undefined; groupId: string; players: Player[]; }) => {
+    withUpdate(t => {
+        const teamIndex = t.teams.findIndex((team: Team) => team.id === teamId);
+        if (teamIndex > -1) {
+            const originalTeam = t.teams[teamIndex];
+            t.teams[teamIndex] = { ...originalTeam, ...updates, logo: updates.logo || undefined };
         }
-        return t;
-    }));
-  };
-  
-   const handleAddPlayer = (teamId: string, playerName: string) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-        const team = t.teams.find(team => team.id === teamId);
-        if (team) team.players.push({ id: crypto.randomUUID(), name: playerName, score: 0, coins: 0, queens: 0, matchesPlayed: 0 });
-        return t;
-    }));
-  };
-  
-    const handleDeletePlayer = (teamId: string, playerId: string) => {
-    if (!userPermissions.canEditTeams) return;
-    setConfirmState({
-      isOpen: true, title: 'Delete Player',
-      message: 'Are you sure you want to remove this player?',
-      onConfirm: () => handleApiCall(api.updateTournament(tournamentId, t => {
-          const team = t.teams.find(team => team.id === teamId);
-          if (team) team.players = team.players.filter(p => p.id !== playerId);
-          return t;
-      }))
     });
   };
-
-  const handleAddGroup = (groupName: string) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-        t.groups.push({ id: crypto.randomUUID(), name: groupName });
-        return t;
-    }));
+  
+  const handleAddPlayer = (teamId: string, playerName: string) => {
+      withUpdate(t => {
+          const team = t.teams.find((team: Team) => team.id === teamId);
+          if (team) {
+              team.players.push({ id: crypto.randomUUID(), name: playerName, score: 0, coins: 0, queens: 0, matchesPlayed: 0 });
+          }
+      });
   };
   
-   const handleDeleteGroup = (groupId: string) => {
-    if (!userPermissions.canEditTeams) return;
+  const handleDeletePlayer = (teamId: string, playerId: string) => {
+      withUpdate(t => {
+          const team = t.teams.find((team: Team) => team.id === teamId);
+          if (team) {
+              team.players = team.players.filter((p: Player) => p.id !== playerId);
+          }
+      });
+  };
+  
+  const handleAddGroup = (groupName: string) => {
+    withUpdate(t => t.groups.push({ id: crypto.randomUUID(), name: groupName }));
+  };
+  
+  const handleDeleteGroup = (groupId: string) => {
     setConfirmState({
         isOpen: true, title: 'Delete Group',
         message: 'Are you sure you want to delete this group? Teams in this group will become unassigned.',
-        onConfirm: () => handleApiCall(api.updateTournament(tournamentId, t => {
-            t.groups = t.groups.filter(g => g.id !== groupId);
-            t.teams.forEach(team => { if (team.groupId === groupId) team.groupId = null; });
-            return t;
-        }))
+        onConfirm: () => withUpdate(t => {
+            t.groups = t.groups.filter((g: Group) => g.id !== groupId);
+            t.teams.forEach((team: Team) => {
+                if (team.groupId === groupId) team.groupId = null;
+            });
+        })
     });
   };
   
-    const handleEditGroup = (groupId: string, newName: string) => {
-    if (!userPermissions.canEditTeams) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-        const group = t.groups.find(g => g.id === groupId);
+  const handleEditGroup = (groupId: string, newName: string) => {
+    withUpdate(t => {
+        const group = t.groups.find((g: Group) => g.id === groupId);
         if (group) group.name = newName;
-        return t;
+    });
+  };
+  
+  const handleAddMatch = (team1Id: string, team2Id: string, date: string) => {
+    withUpdate(t => t.matches.push({
+      id: crypto.randomUUID(),
+      stage: 'league',
+      team1Id, team2Id, date,
+      status: 'upcoming'
     }));
   };
   
-   const handleAddMatch = (team1Id: string, team2Id: string, date: string) => {
-      if (!userPermissions.canEditMatches) return;
-      handleApiCall(api.addMatch(tournamentId, { team1Id, team2Id, date }));
+  const handleAddMatchesBatch = (matchesData: Array<{ team1Id: string, team2Id: string, date: string }>) => {
+    withUpdate(t => {
+      matchesData.forEach(match => {
+        t.matches.push({
+          id: crypto.randomUUID(),
+          stage: 'league',
+          ...match,
+          status: 'upcoming',
+        });
+      });
+    });
   };
   
-    const handleAddMatchesBatch = (matchesData: Array<{ team1Id: string, team2Id: string, date: string }>) => {
-    if (!userPermissions.canEditMatches) return;
-    handleApiCall(api.updateTournament(tournamentId, t => {
-// FIX: Explicitly type the new match object to conform to the Match interface, preventing a type mismatch error for the 'status' property.
-        const newMatches: Match[] = matchesData.map(data => ({
-            id: crypto.randomUUID(),
-            team1Id: data.team1Id,
-            team2Id: data.team2Id,
-            date: data.date,
-            status: 'upcoming',
-            stage: 'league',
-        }));
-        t.matches.push(...newMatches);
-        return t;
-    }));
-  };
-  
-   const handleDeleteMatch = (matchId: string) => {
-    const match = tournament?.matches.find(m => m.id === matchId);
-    if (!match) return;
-    if ((match.status === 'upcoming' && !userPermissions.canEditMatches) || (match.status !== 'upcoming' && !userPermissions.canFinalizeResults)) return;
+  const handleDeleteMatch = (matchId: string) => {
     setConfirmState({
         isOpen: true, title: 'Delete Match',
         message: 'Are you sure you want to delete this match? If it was completed, team stats will be reverted.',
-        onConfirm: () => handleApiCall(api.deleteMatch(tournamentId, matchId))
+        onConfirm: () => withUpdate(t => {
+            const matchIndex = t.matches.findIndex((m: Match) => m.id === matchId);
+            if (matchIndex === -1) return;
+            const match = t.matches[matchIndex];
+            
+            // If match was completed, revert stats
+            if (match.status === 'completed' && match.winnerId) {
+                // This is a simplified revert. A more robust implementation would store stat changes for each match.
+                // For now, we just decrement/adjust based on the single result.
+                const team1 = t.teams.find((team: Team) => team.id === match.team1Id);
+                const team2 = t.teams.find((team: Team) => team.id === match.team2Id);
+                if (team1 && team2) {
+                    team1.matchesPlayed--;
+                    team2.matchesPlayed--;
+                    team1.pointsScored -= match.team1Score || 0;
+                    team1.pointsConceded -= match.team2Score || 0;
+                    team2.pointsScored -= match.team2Score || 0;
+                    team2.pointsConceded -= match.team1Score || 0;
+                    
+                    if (match.winnerId === team1.id) {
+                        team1.wins--; team1.points -= 2; team2.losses--;
+                    } else {
+                        team2.wins--; team2.points -= 2; team1.losses--;
+                    }
+                }
+            }
+            t.matches.splice(matchIndex, 1);
+        })
     });
   };
   
   const handleStartMatch = (matchId: string) => {
-    if (!userPermissions.canEditMatches) return;
-    handleApiCall(api.startMatch(tournamentId, matchId));
+    withUpdate(t => {
+        const match = t.matches.find((m: Match) => m.id === matchId);
+        if (match) {
+            match.status = 'inprogress';
+            match.startTime = new Date().toISOString();
+        }
+    });
   };
   
-   const handleUpdateLiveScore = (matchId: string, playerId: string, points: number, isQueen: boolean) => {
-      if (!userPermissions.canFinalizeResults) return;
-      handleApiCall(api.updateLiveScore(tournamentId, matchId, { playerId, points, isQueen }));
+  const handleUpdateLiveScore = (matchId: string, playerId: string, points: number, isQueen: boolean) => {
+    withUpdate(t => {
+        const match = t.matches.find((m: Match) => m.id === matchId);
+        if (!match || match.status !== 'inprogress') return;
+        
+        if (!match.liveScores) match.liveScores = {};
+        if (!match.liveScores[playerId]) match.liveScores[playerId] = { coins: 0, queens: 0 };
+        
+        if (isQueen) {
+            if (match.queenPocketedBy) return; // Queen already taken
+            match.liveScores[playerId].queens = 1;
+            match.queenPocketedBy = playerId;
+        } else {
+            match.liveScores[playerId].coins += points;
+            if (match.liveScores[playerId].coins < 0) match.liveScores[playerId].coins = 0;
+        }
+    });
   };
   
   const handleEditMatch = (matchId: string, newDate: string) => {
-    if (!userPermissions.canEditMatches) return;
-    handleApiCall(api.editMatch(tournamentId, matchId, newDate));
+    withUpdate(t => {
+        const match = t.matches.find((m: Match) => m.id === matchId);
+        if (match) match.date = newDate;
+    });
   };
   
   const handleUpdateMatchResult = (matchId: string, winnerId: string, team1Score: number, team2Score: number) => {
-    if (!userPermissions.canFinalizeResults) return;
-    handleApiCall(api.updateMatchResult(tournamentId, matchId, { winnerId, team1Score, team2Score }));
+    withUpdate(t => {
+      const match = t.matches.find((m: Match) => m.id === matchId);
+      if (!match) return;
+
+      match.status = 'completed';
+      match.winnerId = winnerId;
+      match.team1Score = team1Score;
+      match.team2Score = team2Score;
+      match.endTime = new Date().toISOString();
+      
+      const team1 = t.teams.find((team: Team) => team.id === match.team1Id);
+      const team2 = t.teams.find((team: Team) => team.id === match.team2Id);
+      
+      if (team1 && team2) {
+        team1.matchesPlayed++;
+        team2.matchesPlayed++;
+        team1.pointsScored += team1Score;
+        team1.pointsConceded += team2Score;
+        team2.pointsScored += team2Score;
+        team2.pointsConceded += team1Score;
+        
+        if (winnerId === team1.id) {
+          team1.wins++;
+          team1.points += 2;
+          team2.losses++;
+          team1.recentForm.push('W');
+          team2.recentForm.push('L');
+        } else {
+          team2.wins++;
+          team2.points += 2;
+          team1.losses++;
+          team2.recentForm.push('W');
+          team1.recentForm.push('L');
+        }
+
+        // Update player stats from live scores if they exist
+        if (match.liveScores) {
+            Object.entries(match.liveScores).forEach(([playerId, scores]) => {
+                const allPlayers = [...team1.players, ...team2.players];
+                const player = allPlayers.find(p => p.id === playerId);
+                if (player) {
+                    const points = scores.coins + scores.queens * 3;
+                    player.score += points;
+                    player.coins += scores.coins;
+                    player.queens += scores.queens;
+                    player.matchesPlayed++;
+                }
+            });
+        }
+      }
+      
+      // Post-match logic for playoffs
+      if (match.stage === 'playoff') {
+          const loserId = winnerId === team1?.id ? team2?.id : team1?.id;
+          if (match.playoffType === 'qualifier1' && loserId) {
+              const q2 = t.matches.find((m: Match) => m.playoffType === 'qualifier2');
+              if (q2) q2.team1Id = loserId;
+          }
+          if (match.playoffType === 'eliminator') {
+              const q2 = t.matches.find((m: Match) => m.playoffType === 'qualifier2');
+              if (q2) q2.team2Id = winnerId;
+          }
+          if (match.playoffType === 'qualifier1') {
+              const final = t.matches.find((m: Match) => m.playoffType === 'final');
+              if (final) final.team1Id = winnerId;
+          }
+           if (match.playoffType === 'qualifier2') {
+              const final = t.matches.find((m: Match) => m.playoffType === 'final');
+              if (final) final.team2Id = winnerId;
+          }
+          if (match.playoffType === 'final') {
+              t.stage = 'completed';
+          }
+      }
+    });
   };
   
   const handleEndLeagueStage = () => {
     setConfirmState({
         isOpen: true, title: 'End League Stage',
         message: 'Are you sure you want to end the league stage and proceed to the playoffs? This cannot be undone.',
-        onConfirm: () => handleApiCall(api.endLeagueStage(tournamentId), "Playoffs created!", "Failed to start playoffs.")
+        onConfirm: () => withUpdate(t => {
+          if (t.stage !== 'league') return;
+          
+          const sortedTeams = [...t.teams]
+            .map(team => ({...team, nsm: team.pointsScored - team.pointsConceded}))
+            .sort((a,b) => b.points - a.points || b.nsm - a.nsm);
+            
+          const [rank1, rank2, rank3, rank4] = sortedTeams;
+
+          if (!rank1 || !rank2 || !rank3 || !rank4) {
+            alert("At least 4 teams are required to start playoffs.");
+            return;
+          }
+          
+          const now = Date.now();
+          
+          const q1: Match = { id: crypto.randomUUID(), name: 'Qualifier 1', stage: 'playoff', playoffType: 'qualifier1', team1Id: rank1.id, team2Id: rank2.id, date: new Date(now + 86400000).toISOString(), status: 'upcoming'};
+          const e: Match = { id: crypto.randomUUID(), name: 'Eliminator', stage: 'playoff', playoffType: 'eliminator', team1Id: rank3.id, team2Id: rank4.id, date: new Date(now + 86400000 * 2).toISOString(), status: 'upcoming'};
+          const q2: Match = { id: crypto.randomUUID(), name: 'Qualifier 2', stage: 'playoff', playoffType: 'qualifier2', team1Id: 'TBD', team2Id: 'TBD', date: new Date(now + 86400000 * 3).toISOString(), status: 'upcoming'};
+          const final: Match = { id: crypto.randomUUID(), name: 'Final', stage: 'playoff', playoffType: 'final', team1Id: 'TBD', team2Id: 'TBD', date: new Date(now + 86400000 * 4).toISOString(), status: 'upcoming'};
+
+          t.matches.push(q1, e, q2, final);
+          t.stage = 'playoffs';
+          setActiveView(View.PLAYOFFS);
+        })
     });
   };
   
   // --- Render Logic ---
-
-  if (isLoading) return <div className="text-center p-10">Loading Tournament...</div>;
-  if (error) return <div className="text-center p-10 text-red-500">{error}</div>;
-  if (!tournament || !currentUser) return <div className="text-center p-10">Tournament data could not be loaded.</div>;
 
   const renderView = () => {
     switch(activeView) {
@@ -282,7 +365,7 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
             onDeleteGroup={handleDeleteGroup}
             onEditTeam={handleEditTeam}
             onEditGroup={handleEditGroup}
-            permissions={userPermissions}
+            readOnly={readOnly}
         />;
       case View.MATCHES:
         return <MatchesManager 
@@ -297,12 +380,10 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
             onUpdateLiveScore={handleUpdateLiveScore}
             onAddMatchesBatch={handleAddMatchesBatch}
             onEndLeagueStage={handleEndLeagueStage}
-            permissions={userPermissions}
+            readOnly={readOnly}
         />;
       case View.SUPER_STRIKER:
         return <SuperStrikerPage teams={tournament.teams} />;
-      case View.USERS:
-        return <UsersManager tournament={tournament} onUpdateTournament={onUpdateTournament} currentUser={currentUser} />;
       case View.PLAYOFFS:
           return <PlayoffsManager 
               tournament={tournament}
@@ -310,8 +391,17 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
               onEditMatch={handleEditMatch}
               onStartMatch={handleStartMatch}
               onUpdateLiveScore={handleUpdateLiveScore}
-              permissions={userPermissions}
-          />
+              readOnly={readOnly}
+          />;
+      case View.USERS:
+          return <UsersManager
+              tournament={tournament}
+              currentUser={currentUser}
+              users={users}
+              isOwner={userRole === 'owner'}
+              onUpdateRole={(userId, role) => onUpdateCollaboratorRole(tournament.id, userId, role)}
+              onRemoveUser={(userId) => onRemoveCollaborator(tournament.id, userId)}
+          />;
       case View.TABLE:
       default:
         return <PointsTable teams={tournament.teams} tournamentName={tournament.name} />;
@@ -322,12 +412,14 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
   const activeNavItemClasses = "bg-cyan-500 text-white font-bold";
   const inactiveNavItemClasses = "bg-gray-200 hover:bg-gray-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200";
 
+  const teamColors = [ '#ef4444', '#f97316', '#eab308', '#84cc16', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#ec4899' ];
+
   return (
     <>
       <div className="p-4 md:p-8 space-y-6">
         <div className="flex items-center space-x-4">
           <button onClick={onBack} className="bg-white dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 p-2 rounded-full transition-colors shadow">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
           </button>
           <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100">{tournament.name}</h1>
         </div>
@@ -340,9 +432,7 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournamentId,
             )}
             <button onClick={() => setActiveView(View.TEAMS)} className={`${navItemClasses} ${activeView === View.TEAMS ? activeNavItemClasses : inactiveNavItemClasses}`}>Teams</button>
             <button onClick={() => setActiveView(View.SUPER_STRIKER)} className={`${navItemClasses} ${activeView === View.SUPER_STRIKER ? activeNavItemClasses : inactiveNavItemClasses}`}>Super Striker</button>
-            {isCurrentUserAdmin && (
-              <button onClick={() => setActiveView(View.USERS)} className={`${navItemClasses} ${activeView === View.USERS ? activeNavItemClasses : inactiveNavItemClasses}`}>Users</button>
-            )}
+            <button onClick={() => setActiveView(View.USERS)} className={`${navItemClasses} ${activeView === View.USERS ? activeNavItemClasses : inactiveNavItemClasses}`}>Users & Share</button>
         </nav>
 
         <div>{renderView()}</div>

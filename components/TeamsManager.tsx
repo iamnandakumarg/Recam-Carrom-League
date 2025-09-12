@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { Team, Group, Permissions, Player } from '../types';
+import { Team, Group, Player } from '../types';
 import Modal from './Modal';
 
 // Declare XLSX library provided by CDN
@@ -17,7 +18,7 @@ interface TeamsManagerProps {
   onEditTeam: (teamId: string, updates: { name: string; color: string; logo: string | null | undefined; groupId: string; players: Player[]; }) => void;
   onEditGroup: (groupId: string, newName: string) => void;
   onAddTeamsBatch: (teamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }>) => void;
-  permissions: Permissions;
+  readOnly: boolean;
 }
 
 const teamColors = [
@@ -30,8 +31,8 @@ const TeamCard: React.FC<{
     onDeletePlayer: (teamId: string, playerId: string) => void;
     onOpenPlayerModal: (teamId: string) => void;
     onOpenEditModal: (team: Team) => void;
-    canEdit: boolean;
-}> = ({ team, onDeleteTeam, onDeletePlayer, onOpenPlayerModal, onOpenEditModal, canEdit }) => (
+    readOnly: boolean;
+}> = ({ team, onDeleteTeam, onDeletePlayer, onOpenPlayerModal, onOpenEditModal, readOnly }) => (
     <div className="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-lg flex flex-col">
       <div className="flex justify-between items-start mb-3">
           <div className="flex items-center">
@@ -42,9 +43,9 @@ const TeamCard: React.FC<{
             )}
             <h3 className="text-xl font-bold">{team.name}</h3>
           </div>
-        {canEdit && (
+        {!readOnly && (
             <div className="flex items-center space-x-2">
-                 <button onClick={() => onOpenEditModal(team)} className="text-gray-400 hover:text-cyan-500 transition-colors">
+                <button onClick={() => onOpenEditModal(team)} className="text-gray-400 hover:text-cyan-500 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
                 </button>
                 <button onClick={() => onDeleteTeam(team.id)} className="text-gray-400 hover:text-red-500 transition-colors">
@@ -57,27 +58,28 @@ const TeamCard: React.FC<{
         {team.players.map((player) => (
           <div key={player.id} className="flex justify-between items-center bg-gray-100 dark:bg-slate-700 p-2 rounded">
             <span>{player.name}</span>
-            {canEdit && (
+            {!readOnly && (
                 <button onClick={() => onDeletePlayer(team.id, player.id)} className="text-gray-400 hover:text-red-500 transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
             )}
           </div>
         ))}
         {team.players.length === 0 && <p className="text-sm text-gray-500 dark:text-gray-400">No players yet.</p>}
       </div>
-       <button 
-          onClick={() => onOpenPlayerModal(team.id)}
-          disabled={!canEdit}
-          className="mt-4 w-full bg-cyan-50 text-cyan-600 hover:bg-cyan-100 dark:bg-slate-700 dark:text-cyan-400 dark:hover:bg-slate-600 font-semibold py-2 px-3 rounded text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Add Player
-        </button>
+      {!readOnly && (
+        <button 
+            onClick={() => onOpenPlayerModal(team.id)}
+            className="mt-4 w-full bg-cyan-50 text-cyan-600 hover:bg-cyan-100 dark:bg-slate-700 dark:text-cyan-400 dark:hover:bg-slate-600 font-semibold py-2 px-3 rounded text-sm transition-colors"
+            >
+            Add Player
+            </button>
+      )}
     </div>
 );
 
 
-const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, onDeleteTeam, onAddPlayer, onDeletePlayer, onAddGroup, onDeleteGroup, onEditTeam, onEditGroup, onAddTeamsBatch, permissions }) => {
+const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, onDeleteTeam, onAddPlayer, onDeletePlayer, onAddGroup, onDeleteGroup, onEditTeam, onEditGroup, onAddTeamsBatch, readOnly }) => {
   // Add Team Modal State
   const [isTeamModalOpen, setTeamModalOpen] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
@@ -276,41 +278,40 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
   };
 
   const unassignedTeams = teams.filter(t => !t.groupId || !groups.some(g => g.id === t.groupId));
-  const canEdit = permissions.canEditTeams;
 
   return (
     <div className="space-y-6">
        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md">
           <h2 className="text-2xl sm:text-3xl font-bold text-cyan-600 dark:text-cyan-400 self-start sm:self-center">Teams</h2>
-          <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-             <button onClick={handleDownloadTemplate} className="bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
-                Template
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} disabled={!canEdit} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Upload
-            </button>
-            <button 
-                onClick={() => setGroupModalOpen(true)}
-                disabled={!canEdit}
-                className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Add Group
-            </button>
-            <button 
-                onClick={() => { 
-                    if (groups.length > 0) {
-                        setSelectedGroupIdForNewTeam(groups[0].id);
-                        setTeamModalOpen(true);
-                    } else {
-                        alert("Please create a group first before adding a team.");
-                    }
-                }} 
-                disabled={!canEdit}
-                className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Add Team
-            </button>
-             <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} accept=".xlsx, .xls" />
-          </div>
+          {!readOnly && (
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                <button onClick={handleDownloadTemplate} className="bg-slate-500 hover:bg-slate-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Template
+                </button>
+                <button onClick={() => fileInputRef.current?.click()} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Upload
+                </button>
+                <button 
+                    onClick={() => setGroupModalOpen(true)}
+                    className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
+                    Add Group
+                </button>
+                <button 
+                    onClick={() => { 
+                        if (groups.length > 0) {
+                            setSelectedGroupIdForNewTeam(groups[0].id);
+                            setTeamModalOpen(true);
+                        } else {
+                            alert("Please create a group first before adding a team.");
+                        }
+                    }} 
+                    className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                >
+                Add Team
+                </button>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} accept=".xlsx, .xls" />
+            </div>
+          )}
         </div>
 
       <div className="space-y-8">
@@ -318,7 +319,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
           <section key={group.id}>
               <div className="flex justify-between items-center mb-4">
                   <h3 className="text-2xl font-bold text-slate-700 dark:text-slate-300">{group.name}</h3>
-                  {canEdit && (
+                {!readOnly && (
                     <div className="flex items-center space-x-2">
                         <button onClick={() => setEditGroupData(group)} className="text-gray-400 hover:text-cyan-500 transition-colors" aria-label={`Edit ${group.name}`}>
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
@@ -327,7 +328,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                         </button>
                     </div>
-                  )}
+                )}
               </div>
                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {teams.filter(t => t.groupId === group.id).map((team) => (
@@ -338,7 +339,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
                           onDeletePlayer={onDeletePlayer}
                           onOpenPlayerModal={(teamId) => { setSelectedTeamId(teamId); setPlayerModalOpen(true); }}
                           onOpenEditModal={setEditTeamData}
-                          canEdit={canEdit}
+                          readOnly={readOnly}
                       />
                   ))}
                </div>
@@ -357,7 +358,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
                           onDeletePlayer={onDeletePlayer}
                           onOpenPlayerModal={(teamId) => { setSelectedTeamId(teamId); setPlayerModalOpen(true); }}
                           onOpenEditModal={setEditTeamData}
-                          canEdit={canEdit}
+                          readOnly={readOnly}
                       />
                   ))}
                </div>
