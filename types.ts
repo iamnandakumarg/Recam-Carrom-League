@@ -2,7 +2,6 @@
 export interface User {
   id: string;
   email: string;
-  password?: string; // Stored in plaintext for this demo. Use hashing in a real app.
 }
 
 export interface Player {
