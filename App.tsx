@@ -78,43 +78,55 @@ const App: React.FC = () => {
 
   const [theme, toggleTheme] = useTheme();
 
+  // Handles session state and initial loading
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAppLoading(false);
+    });
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event: AuthChangeEvent, session: Session | null) => {
+      (_event, session) => {
         setSession(session);
-        if (session?.user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id, email')
-            .eq('id', session.user.id)
-            .single();
-          
-          if (profile) {
-            setCurrentUser(profile);
-          } else if (session.user.email) {
-            // Fallback to user data from session if profile is missing
-            setCurrentUser({
-              id: session.user.id,
-              email: session.user.email,
-            });
-          } else {
-            console.error("Authenticated user has no email and no profile.");
-            setCurrentUser(null);
-          }
-        } else {
-          setCurrentUser(null);
-        }
-        setAppLoading(false);
       }
     );
+
     return () => subscription.unsubscribe();
   }, []);
+
+  // Derives the currentUser from the session
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .eq('id', session.user.id)
+          .single();
+        
+        if (profile) {
+          setCurrentUser(profile);
+        } else if (session.user.email) {
+          // Fallback to user data from session if profile is missing
+          setCurrentUser({
+            id: session.user.id,
+            email: session.user.email,
+          });
+        } else {
+          console.error("Authenticated user has no email and no profile.");
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+    };
+
+    fetchUserProfile();
+  }, [session]);
 
   const fetchUserTournaments = useCallback(async () => {
     if (!currentUser) return;
     
-    // Using Supabase RPC to fetch all tournaments for the current user is the most efficient way.
-    // As a fallback, let's fetch IDs first then the data.
     const { data: owned, error: ownedError } = await supabase.from('tournaments').select('id').eq('owner_id', currentUser.id);
     const { data: collab, error: collabError } = await supabase.from('tournament_collaborators').select('tournament_id').eq('user_id', currentUser.id);
 
@@ -155,20 +167,22 @@ const App: React.FC = () => {
   }, [currentUser]);
 
   const fetchAllUsers = useCallback(async () => {
+    if(!currentUser) return;
     const { data, error } = await supabase.from('profiles').select('id, email');
     if (error) console.error("Error fetching users:", error);
     else setUsers(data || []);
-  }, []);
+  }, [currentUser]);
 
+  // Fetches application data when the user is identified
   useEffect(() => {
-    if (session) {
+    if (currentUser) {
       fetchUserTournaments();
       fetchAllUsers();
     } else {
       setTournaments([]);
       setUsers([]);
     }
-  }, [session, fetchUserTournaments, fetchAllUsers]);
+  }, [currentUser, fetchUserTournaments, fetchAllUsers]);
 
   // --- Auth Handlers ---
   const handleLogin = async (email: string, pass: string) => {
@@ -287,8 +301,6 @@ const App: React.FC = () => {
   };
   
   const handleUpdateTournament = (updatedTournament: Tournament) => {
-    // This function will now be used for local optimistic updates,
-    // after a successful DB operation.
     setTournaments(prev => prev.map(t => t.id === updatedTournament.id ? updatedTournament : t));
   };
 
