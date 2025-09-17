@@ -156,12 +156,47 @@ const App: React.FC = () => {
     if (error) {
       console.error("Error fetching full tournament data:", error);
     } else {
-      const remappedData = data.map(t => ({
-        ...t,
-        ownerId: t.owner_id,
-        inviteCode: t.invite_code,
-        collaborators: t.collaborators.map((c: any) => ({ userId: c.user_id, role: c.role }))
-      }))
+      const remappedData = data.map(t => {
+        const teamsWithDefaults = (t.teams || []).map((team: any) => ({
+          ...team,
+          // Map snake_case to camelCase
+          groupId: team.group_id,
+          logo: team.logo_url,
+          // Provide defaults for calculated fields to prevent crashes.
+          // In a real app, these would be calculated from match results.
+          matchesPlayed: team.matchesPlayed || 0,
+          wins: team.wins || 0,
+          losses: team.losses || 0,
+          points: team.points || 0,
+          pointsScored: team.pointsScored || 0,
+          pointsConceded: team.pointsConceded || 0,
+          recentForm: team.recentForm || [], // FIX: Ensure recentForm is always an array
+        }));
+        
+        const matchesWithCamelCase = (t.matches || []).map((m: any) => ({
+          ...m,
+          team1Id: m.team1_id,
+          team2Id: m.team2_id,
+          date: m.scheduled_at,
+          winnerId: m.winner_id,
+          team1Score: m.team1_score,
+          team2Score: m.team2_score,
+          liveScores: m.live_scores,
+          queenPocketedBy: m.queen_pocketed_by_player_id,
+          startTime: m.started_at,
+          endTime: m.ended_at,
+          playoffType: m.playoff_type,
+        }));
+
+        return {
+          ...t,
+          ownerId: t.owner_id,
+          inviteCode: t.invite_code,
+          teams: teamsWithDefaults,
+          matches: matchesWithCamelCase,
+          collaborators: t.collaborators.map((c: any) => ({ userId: c.user_id, role: c.role }))
+        }
+      });
       setTournaments(remappedData as any);
     }
   }, [currentUser]);

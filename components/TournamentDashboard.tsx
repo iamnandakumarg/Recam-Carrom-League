@@ -62,15 +62,31 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
     if (teamError) { console.error(teamError); alert('Failed to create team.'); return; }
 
     const playersToInsert = playerNames.map(name => ({ team_id: teamData.id, name }));
+    let createdPlayers: Player[] = [];
     if(playersToInsert.length > 0) {
       const { data: playersData, error: playerError } = await supabase.from('players').insert(playersToInsert).select();
       if (playerError) { console.error(playerError); /* Should handle cleanup */ alert('Failed to create players.'); return; }
-      teamData.players = playersData;
-    } else {
-      teamData.players = [];
+      createdPlayers = playersData.map(p => ({ ...p, score: 0, coins: 0, queens: 0, matchesPlayed: 0}));
     }
     
-    onUpdateTournament({ ...tournament, teams: [...tournament.teams, teamData as any]});
+    // FIX: Create a complete Team object that matches the frontend interface to prevent crashes
+    const newTeam: Team = {
+      id: teamData.id,
+      name: teamData.name,
+      color: teamData.color,
+      logo: teamData.logo_url || undefined,
+      players: createdPlayers,
+      groupId: teamData.group_id,
+      matchesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      points: 0,
+      pointsScored: 0,
+      pointsConceded: 0,
+      recentForm: [],
+    };
+
+    onUpdateTournament({ ...tournament, teams: [...tournament.teams, newTeam]});
   };
   
   const handleAddTeamsBatch = async (teamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }>) => {
