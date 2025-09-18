@@ -614,7 +614,9 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
             )}
             <button onClick={() => setActiveView(View.TEAMS)} className={`${navItemClasses} ${activeView === View.TEAMS ? activeNavItemClasses : inactiveNavItemClasses}`}>Teams</button>
             <button onClick={() => setActiveView(View.SUPER_STRIKER)} className={`${navItemClasses} ${activeView === View.SUPER_STRIKER ? activeNavItemClasses : inactiveNavItemClasses}`}>Super Striker</button>
-            <button onClick={() => setActiveView(View.USERS)} className={`${navItemClasses} ${activeView === View.USERS ? activeNavItemClasses : inactiveNavItemClasses}`}>Users & Share</button>
+            {(userRole === 'owner' || userRole === 'editor') && (
+              <button onClick={() => setActiveView(View.USERS)} className={`${navItemClasses} ${activeView === View.USERS ? activeNavItemClasses : inactiveNavItemClasses}`}>Users & Share</button>
+            )}
         </nav>
 
         <div>{renderView()}</div>
