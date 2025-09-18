@@ -67,6 +67,87 @@ const AuthComponent: React.FC<{
   );
 };
 
+// Centralized function to calculate all derived stats for a tournament
+const recalculateStatsForTournament = (tournament: Tournament): Tournament => {
+    // Deep copy to avoid direct state mutation
+    const processedTournament = JSON.parse(JSON.stringify(tournament));
+
+    // Get ALL completed matches first
+    const allCompletedMatches = processedTournament.matches
+        .filter((m: Match) => m.status === 'completed')
+        .sort((a: Match, b: Match) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // Then filter for league matches for the points table
+    const completedLeagueMatches = allCompletedMatches.filter((m: Match) => m.stage === 'league');
+    
+    // Iterate over each team to calculate their stats
+    processedTournament.teams.forEach((team: Team) => {
+        // --- 1. Calculate TEAM stats for the Points Table (League Only) ---
+        const teamLeagueMatches = completedLeagueMatches.filter(m => m.team1Id === team.id || m.team2Id === team.id);
+        
+        const matchesPlayed = teamLeagueMatches.length;
+        let wins = 0;
+        let pointsScored = 0;
+        let pointsConceded = 0;
+        const recentForm: ('W' | 'L')[] = [];
+
+        teamLeagueMatches.forEach(m => {
+            if (m.winnerId === team.id) {
+                wins++;
+                recentForm.push('W');
+            } else {
+                recentForm.push('L');
+            }
+
+            if (m.team1Id === team.id) {
+                pointsScored += m.team1Score || 0;
+                pointsConceded += m.team2Score || 0;
+            } else {
+                pointsScored += m.team2Score || 0;
+                pointsConceded += m.team1Score || 0;
+            }
+        });
+        
+        // Assign calculated team stats
+        team.matchesPlayed = matchesPlayed;
+        team.wins = wins;
+        team.losses = matchesPlayed - wins;
+        team.points = wins * 2;
+        team.pointsScored = pointsScored;
+        team.pointsConceded = pointsConceded;
+        team.recentForm = recentForm.slice(-5);
+
+        // --- 2. Calculate PLAYER stats for Super Striker (All Matches) ---
+        const allTeamCompletedMatches = allCompletedMatches.filter(m => m.team1Id === team.id || m.team2Id === team.id);
+
+        team.players.forEach((player: Player) => {
+            let totalScore = 0;
+            let totalCoins = 0;
+            let totalQueens = 0;
+
+            allTeamCompletedMatches.forEach(match => {
+                // Check if the match has live score data and data for this specific player
+                if (match.liveScores && match.liveScores[player.id]) {
+                    const stats = match.liveScores[player.id];
+                    const coins = stats.coins || 0;
+                    const queens = stats.queens || 0;
+                    totalCoins += coins;
+                    totalQueens += queens;
+                    totalScore += coins + (queens * 3);
+                }
+            });
+            
+            // Assign calculated player stats
+            player.score = totalScore;
+            player.coins = totalCoins;
+            player.queens = totalQueens;
+            player.matchesPlayed = allTeamCompletedMatches.length;
+        });
+    });
+
+    return processedTournament;
+};
+
 
 const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -156,48 +237,45 @@ const App: React.FC = () => {
     if (error) {
       console.error("Error fetching full tournament data:", error);
     } else {
-      const remappedData = data.map(t => {
-        const teamsWithDefaults = (t.teams || []).map((team: any) => ({
-          ...team,
-          // Map snake_case to camelCase
-          groupId: team.group_id,
-          logo: team.logo_url,
-          // Provide defaults for calculated fields to prevent crashes.
-          // In a real app, these would be calculated from match results.
-          matchesPlayed: team.matchesPlayed || 0,
-          wins: team.wins || 0,
-          losses: team.losses || 0,
-          points: team.points || 0,
-          pointsScored: team.pointsScored || 0,
-          pointsConceded: team.pointsConceded || 0,
-          recentForm: team.recentForm || [], // FIX: Ensure recentForm is always an array
-        }));
-        
-        const matchesWithCamelCase = (t.matches || []).map((m: any) => ({
-          ...m,
-          team1Id: m.team1_id,
-          team2Id: m.team2_id,
-          date: m.scheduled_at,
-          winnerId: m.winner_id,
-          team1Score: m.team1_score,
-          team2Score: m.team2_score,
-          liveScores: m.live_scores,
-          queenPocketedBy: m.queen_pocketed_by_player_id,
-          startTime: m.started_at,
-          endTime: m.ended_at,
-          playoffType: m.playoff_type,
-        }));
+      const remappedData = data.map(tournamentData => {
+          // Remap teams and players from DB schema to frontend types with initial values
+          const teams = (tournamentData.teams || []).map((team: any) => ({
+              ...team,
+              logo: team.logo_url,
+              groupId: team.group_id,
+              players: (team.players || []).map((p: any) => ({ ...p, score: 0, coins: 0, queens: 0, matchesPlayed: 0 })),
+              matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: []
+          }));
 
-        return {
-          ...t,
-          ownerId: t.owner_id,
-          inviteCode: t.invite_code,
-          teams: teamsWithDefaults,
-          matches: matchesWithCamelCase,
-          collaborators: t.collaborators.map((c: any) => ({ userId: c.user_id, role: c.role }))
-        }
+          // Remap matches from DB schema to frontend types
+          const matches = (tournamentData.matches || []).map((m: any) => ({
+              id: m.id, name: m.name, stage: m.stage, playoffType: m.playoff_type,
+              team1Id: m.team1_id, team2Id: m.team2_id, date: m.scheduled_at, status: m.status,
+              winnerId: m.winner_id, team1Score: m.team1_score, team2Score: m.team2_score,
+              liveScores: m.live_scores, queenPocketedBy: m.queen_pocketed_by_player_id,
+              startTime: m.started_at, endTime: m.ended_at,
+          }));
+          
+          const collaborators = (tournamentData.collaborators || []).map((c: any) => ({ userId: c.user_id, role: c.role }));
+
+          // Construct a raw tournament object
+          const rawTournamentObject: Tournament = {
+              id: tournamentData.id,
+              name: tournamentData.name,
+              stage: tournamentData.stage,
+              ownerId: tournamentData.owner_id,
+              inviteCode: tournamentData.invite_code,
+              groups: tournamentData.groups || [],
+              teams: teams as Team[],
+              matches: matches as Match[],
+              collaborators: collaborators,
+          };
+
+          // Use the single, reliable function to calculate all stats
+          return recalculateStatsForTournament(rawTournamentObject);
       });
-      setTournaments(remappedData as any);
+      
+      setTournaments(remappedData);
     }
   }, [currentUser]);
 
@@ -336,7 +414,8 @@ const App: React.FC = () => {
   };
   
   const handleUpdateTournament = (updatedTournament: Tournament) => {
-    setTournaments(prev => prev.map(t => t.id === updatedTournament.id ? updatedTournament : t));
+    const recalculatedTournament = recalculateStatsForTournament(updatedTournament);
+    setTournaments(prev => prev.map(t => t.id === recalculatedTournament.id ? recalculatedTournament : t));
   };
 
   const selectedTournament = tournaments.find(t => t.id === selectedTournamentId);

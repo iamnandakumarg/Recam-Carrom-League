@@ -42,8 +42,8 @@ export interface Match {
   name?: string; // e.g., "Qualifier 1"
   stage: 'league' | 'playoff';
   playoffType?: 'qualifier1' | 'eliminator' | 'qualifier2' | 'final';
-  team1Id: string;
-  team2Id: string;
+  team1Id: string | null;
+  team2Id: string | null;
   date: string;
   status: MatchStatus;
   winnerId?: string;

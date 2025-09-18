@@ -30,6 +30,8 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
     title: string;
     message: string;
     onConfirm: () => void;
+    confirmText?: string;
+    confirmButtonClass?: string;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
   
   const userRole = useMemo(() => {
@@ -90,15 +92,104 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
   };
   
   const handleAddTeamsBatch = async (teamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }>) => {
-      // This is complex. We'll do a full refresh after this.
-      for (const teamData of teamsData) {
-        let group = tournament.groups.find((g: Group) => g.name.toLowerCase() === teamData.groupName.toLowerCase());
-        if(!group) {
-          const {data: newGroup} = await supabase.from('groups').insert({ tournament_id: tournament.id, name: teamData.groupName }).select().single();
-          group = newGroup;
+    // 1. Get unique group names from the file
+    const uniqueGroupNamesInFile = [...new Set(teamsData.map(t => t.groupName.trim()).filter(Boolean))];
+
+    // 2. Find which groups already exist
+    const existingGroups = new Map(tournament.groups.map(g => [g.name.trim().toLowerCase(), g]));
+    const groupNamesToCreate = uniqueGroupNamesInFile.filter(name => !existingGroups.has(name.toLowerCase()));
+
+    // 3. Create the new groups
+    let newGroups: Group[] = [];
+    if (groupNamesToCreate.length > 0) {
+        const groupsToInsert = groupNamesToCreate.map(name => ({ tournament_id: tournament.id, name: name.trim() }));
+        const { data: createdGroupsData, error } = await supabase.from('groups').insert(groupsToInsert).select();
+        if (error) {
+            console.error(error);
+            alert("Failed to create new groups from the file. Please ensure group names are unique if there is a database constraint.");
+            return;
         }
-        await handleAddTeam(teamData.teamName, teamColors[tournament.teams.length % teamColors.length], group!.id, teamData.playerNames, null);
-      }
+        newGroups = createdGroupsData;
+    }
+
+    // 4. Combine existing and new groups for easy lookup
+    const allGroups = [...tournament.groups, ...newGroups];
+    const allGroupsMap = new Map(allGroups.map(g => [g.name.trim().toLowerCase(), g]));
+
+    // 5. Prepare teams for insertion
+    const teamsToInsert = teamsData.map((teamData, index) => {
+        const group = allGroupsMap.get(teamData.groupName.trim().toLowerCase());
+        if (!group) {
+            console.error(`Could not find group for team: ${teamData.teamName}`);
+            return null;
+        }
+        return {
+            tournament_id: tournament.id,
+            name: teamData.teamName.trim(),
+            color: teamColors[(tournament.teams.length + index) % teamColors.length],
+            group_id: group.id,
+        };
+    }).filter(Boolean) as { tournament_id: string; name: string; color: string; group_id: string; }[];
+
+    if (teamsToInsert.length === 0) {
+        alert("No valid teams to add.");
+        return;
+    }
+    
+    // 6. Insert teams
+    const { data: createdTeamsData, error: teamsError } = await supabase.from('teams').insert(teamsToInsert).select();
+    if (teamsError) {
+        console.error(teamsError);
+        alert("Failed to create teams from the file.");
+        return;
+    }
+    
+    // 7. Prepare players for insertion
+    const playersToInsert: { team_id: string, name: string }[] = [];
+    createdTeamsData.forEach(teamDb => {
+        const originalTeamData = teamsData.find(t => t.teamName.trim() === teamDb.name);
+        if (originalTeamData && originalTeamData.playerNames.length > 0) {
+            originalTeamData.playerNames.forEach(playerName => {
+                playersToInsert.push({ team_id: teamDb.id, name: playerName.trim() });
+            });
+        }
+    });
+    
+    // 8. Insert players
+    let createdPlayersData: any[] = [];
+    if (playersToInsert.length > 0) {
+        const { data, error: playersError } = await supabase.from('players').insert(playersToInsert).select();
+        if (playersError) {
+            console.error(playersError);
+            alert("Created teams but failed to create players.");
+        } else {
+            createdPlayersData = data;
+        }
+    }
+    
+    // 9. Reconstruct new team objects for state
+    const newTeams: Team[] = createdTeamsData.map(teamDb => {
+        const playersForTeam = createdPlayersData.filter(p => p.team_id === teamDb.id).map(p => ({
+            id: p.id, name: p.name, score: 0, coins: 0, queens: 0, matchesPlayed: 0
+        }));
+        return {
+            id: teamDb.id,
+            name: teamDb.name,
+            color: teamDb.color,
+            logo: teamDb.logo_url || undefined,
+            groupId: teamDb.group_id,
+            players: playersForTeam,
+            matchesPlayed: 0, wins: 0, losses: 0, points: 0, pointsScored: 0, pointsConceded: 0, recentForm: []
+        };
+    });
+
+    const updatedTournament = {
+        ...tournament,
+        groups: [...tournament.groups, ...newGroups],
+        teams: [...tournament.teams, ...newTeams],
+    };
+    onUpdateTournament(updatedTournament);
+    alert(`Successfully imported ${newTeams.length} teams.`);
   };
 
   const handleDeleteTeam = (teamId: string) => {
@@ -112,7 +203,10 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
           return t;
         },
         // FIX: The dbAction function must return a Promise. Making it async ensures this.
-        async () => supabase.from('teams').delete().match({ id: teamId })
+        async () => {
+          const { error } = await supabase.from('teams').delete().match({ id: teamId });
+          return { error };
+        }
       )
     });
   };
@@ -151,9 +245,14 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
           const { error } = await supabase.from('groups').delete().match({ id: groupId });
           if(error) alert("Failed to delete group");
           else {
-              const updatedTournament = { ...tournament };
-              updatedTournament.groups = updatedTournament.groups.filter(g => g.id !== groupId);
-              updatedTournament.teams.forEach(t => { if(t.groupId === groupId) t.groupId = null });
+              const updatedTournament = JSON.parse(JSON.stringify(tournament));
+              updatedTournament.groups = updatedTournament.groups.filter((g: Group) => g.id !== groupId);
+              updatedTournament.teams = updatedTournament.teams.map((t: Team) => { 
+                if(t.groupId === groupId) {
+                  return {...t, groupId: null};
+                }
+                return t;
+              });
               onUpdateTournament(updatedTournament);
           }
         }
@@ -164,8 +263,8 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
       const { error } = await supabase.from('groups').update({ name: newName }).match({ id: groupId });
       if(error) alert("Failed to edit group");
       else {
-          const updatedTournament = { ...tournament };
-          const group = updatedTournament.groups.find(g => g.id === groupId);
+          const updatedTournament = JSON.parse(JSON.stringify(tournament));
+          const group = updatedTournament.groups.find((g: Group) => g.id === groupId);
           if (group) group.name = newName;
           onUpdateTournament(updatedTournament);
       }
@@ -175,9 +274,17 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
     const { data, error } = await supabase.from('players').insert({ team_id: teamId, name: playerName }).select().single();
     if (error) { alert("Failed to add player"); }
     else {
-      const updatedTournament = { ...tournament };
-      const team = updatedTournament.teams.find(t => t.id === teamId);
-      if (team) team.players.push(data as any);
+      const updatedTournament = JSON.parse(JSON.stringify(tournament));
+      const team = updatedTournament.teams.find((t: Team) => t.id === teamId);
+      const newPlayer: Player = {
+        id: data.id,
+        name: data.name,
+        score: 0,
+        coins: 0,
+        queens: 0,
+        matchesPlayed: 0
+      };
+      if (team) team.players.push(newPlayer);
       onUpdateTournament(updatedTournament);
     }
   }
@@ -186,9 +293,9 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
      const { error } = await supabase.from('players').delete().match({ id: playerId });
      if(error) { alert("Failed to delete player"); }
      else {
-        const updatedTournament = { ...tournament };
-        const team = updatedTournament.teams.find(t => t.id === teamId);
-        if(team) team.players = team.players.filter(p => p.id !== playerId);
+        const updatedTournament = JSON.parse(JSON.stringify(tournament));
+        const team = updatedTournament.teams.find((t: Team) => t.id === teamId);
+        if(team) team.players = team.players.filter((p: Player) => p.id !== playerId);
         onUpdateTournament(updatedTournament);
      }
   }
@@ -234,16 +341,16 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
     const { error } = await supabase.from('matches').update({ status: 'inprogress', started_at: startTime }).match({ id: matchId });
     if (error) alert("Failed to start match");
     else {
-      const updated = { ...tournament };
-      const match = updated.matches.find(m => m.id === matchId);
+      const updated = JSON.parse(JSON.stringify(tournament));
+      const match = updated.matches.find((m: Match) => m.id === matchId);
       if(match) { match.status = 'inprogress'; match.startTime = startTime; }
       onUpdateTournament(updated);
     }
   };
 
   const handleUpdateLiveScore = async (matchId: string, playerId: string, points: number, isQueen: boolean) => {
-     const updated = { ...tournament };
-     const match = updated.matches.find(m => m.id === matchId);
+     const updated = JSON.parse(JSON.stringify(tournament));
+     const match = updated.matches.find((m: Match) => m.id === matchId);
      if (!match) return;
      
      if (!match.liveScores) match.liveScores = {};
@@ -258,7 +365,10 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
      }
      
      const { error } = await supabase.from('matches').update({ live_scores: match.liveScores, queen_pocketed_by_player_id: match.queenPocketedBy }).match({ id: matchId });
-     if (error) alert("Failed to update score");
+     if (error) {
+        alert("Failed to update score");
+        // Note: No state revert here for simplicity in a live-scoring scenario.
+     }
      else onUpdateTournament(updated);
   };
   
@@ -266,16 +376,14 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
     const { error } = await supabase.from('matches').update({ scheduled_at: newDate }).match({ id: matchId });
     if(error) alert('Failed to reschedule');
     else {
-      const updated = { ...tournament };
-      const match = updated.matches.find(m => m.id === matchId);
+      const updated = JSON.parse(JSON.stringify(tournament));
+      const match = updated.matches.find((m: Match) => m.id === matchId);
       if(match) match.date = newDate;
       onUpdateTournament(updated);
     }
   };
   
   const handleUpdateMatchResult = async (matchId: string, winnerId: string, team1Score: number, team2Score: number) => {
-    // This is a complex transaction. A db function (RPC) would be best.
-    // For now, do it on the client.
     const match = tournament.matches.find(m => m.id === matchId);
     if (!match) return;
 
@@ -284,23 +392,145 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
         status: 'completed', winner_id: winnerId, team1_score: team1Score, team2_score: team2Score, ended_at: endTime
     }).match({ id: matchId });
     
-    if (error) { alert('Failed to update match result.'); return; }
-
-    // Here we should update team and player stats. This is a lot of logic.
-    // For now, we will just update the match and rely on a full refresh, or just update the match status locally.
-    const updated = { ...tournament };
-    const updatedMatch = updated.matches.find(m => m.id === matchId);
-    if(updatedMatch) {
-      updatedMatch.status = 'completed'; updatedMatch.winnerId = winnerId; updatedMatch.team1Score = team1Score; updatedMatch.team2Score = team2Score; updatedMatch.endTime = endTime;
+    if (error) {
+      alert('Failed to update match result.');
+      return;
     }
-    onUpdateTournament(updated);
-    // A full refresh would be safer to recalculate points tables correctly.
-    // fetchUserTournaments(); // This function isn't available here. Let's rely on parent.
+
+    const updatedTournament = JSON.parse(JSON.stringify(tournament));
+    const updatedMatch = updatedTournament.matches.find((m: Match) => m.id === matchId);
+    if(updatedMatch) {
+      updatedMatch.status = 'completed';
+      updatedMatch.winnerId = winnerId;
+      updatedMatch.team1Score = team1Score;
+      updatedMatch.team2Score = team2Score;
+      updatedMatch.endTime = endTime;
+    }
+    
+    if (match.stage === 'playoff') {
+        const loserId = match.team1Id === winnerId ? match.team2Id : match.team1Id;
+        const q2Match = updatedTournament.matches.find((m: Match) => m.playoffType === 'qualifier2');
+        const finalMatch = updatedTournament.matches.find((m: Match) => m.playoffType === 'final');
+        
+        const dbUpdates = [];
+
+        switch (match.playoffType) {
+            case 'qualifier1':
+                if (finalMatch) {
+                    finalMatch.team1Id = winnerId;
+                    dbUpdates.push(supabase.from('matches').update({ team1_id: winnerId }).match({ id: finalMatch.id }));
+                }
+                if (q2Match) {
+                    q2Match.team1Id = loserId;
+                    dbUpdates.push(supabase.from('matches').update({ team1_id: loserId }).match({ id: q2Match.id }));
+                }
+                break;
+            case 'eliminator':
+                if (q2Match) {
+                    q2Match.team2Id = winnerId;
+                    dbUpdates.push(supabase.from('matches').update({ team2_id: winnerId }).match({ id: q2Match.id }));
+                }
+                break;
+            case 'qualifier2':
+                if (finalMatch) {
+                    finalMatch.team2Id = winnerId;
+                    dbUpdates.push(supabase.from('matches').update({ team2_id: winnerId }).match({ id: finalMatch.id }));
+                }
+                break;
+            case 'final':
+                updatedTournament.stage = 'completed';
+                dbUpdates.push(supabase.from('tournaments').update({ stage: 'completed' }).match({ id: tournament.id }));
+                break;
+        }
+
+        if (dbUpdates.length > 0) {
+            const results = await Promise.all(dbUpdates);
+            const anyError = results.some((res: any) => res.error);
+            if (anyError) {
+                console.error("Failed to update playoff progression", results);
+                alert("An error occurred while updating the playoff bracket. Please refresh.");
+            }
+        }
+    }
+    
+    onUpdateTournament(updatedTournament);
   };
 
   const handleEndLeagueStage = () => {
-     // This is also a complex transaction. RPC is best.
-     alert("This functionality requires a database transaction and is best handled by a server-side function (RPC in Supabase).");
+     setConfirmState({
+      isOpen: true,
+      title: 'Start Playoffs?',
+      message: 'This will end the league stage and generate the playoff bracket based on the current top 4 teams. This action cannot be undone.',
+      confirmText: 'Start Playoffs',
+      confirmButtonClass: 'bg-green-600 hover:bg-green-700',
+      onConfirm: async () => {
+        if (tournament.matches.some(m => m.stage === 'playoff')) {
+            alert("Playoff matches have already been generated.");
+            return;
+        }
+
+        const sortedTeams = [...tournament.teams]
+          .map(team => ({ ...team, nsm: team.pointsScored - team.pointsConceded }))
+          .sort((a, b) => {
+            if (b.points !== a.points) return b.points - a.points;
+            return b.nsm - a.nsm;
+          });
+
+        if (sortedTeams.length < 4) {
+          alert("You need at least 4 teams to start the playoffs.");
+          return;
+        }
+
+        const [rank1, rank2, rank3, rank4] = sortedTeams;
+        
+        const lastMatchDate = tournament.matches
+            .filter(m => m.stage === 'league' && m.status === 'completed')
+            .reduce((latest, match) => {
+                const matchDate = new Date(match.date);
+                return matchDate > latest ? matchDate : latest;
+            }, new Date(0));
+        
+        const baseDate = lastMatchDate.getTime() === 0 ? new Date() : lastMatchDate;
+
+        const getNextMatchDate = (daysToAdd: number) => {
+            const nextDate = new Date(baseDate);
+            nextDate.setDate(nextDate.getDate() + daysToAdd);
+            nextDate.setHours(19, 0, 0, 0); // Default to 7 PM
+            return nextDate.toISOString();
+        };
+
+        const matchesForDb = [
+            { tournament_id: tournament.id, name: 'Qualifier 1', stage: 'playoff', playoff_type: 'qualifier1', team1_id: rank1.id, team2_id: rank2.id, scheduled_at: getNextMatchDate(2), status: 'upcoming' },
+            { tournament_id: tournament.id, name: 'Eliminator', stage: 'playoff', playoff_type: 'eliminator', team1_id: rank3.id, team2_id: rank4.id, scheduled_at: getNextMatchDate(3), status: 'upcoming' },
+            { tournament_id: tournament.id, name: 'Qualifier 2', stage: 'playoff', playoff_type: 'qualifier2', team1_id: null, team2_id: null, scheduled_at: getNextMatchDate(5), status: 'upcoming' },
+            { tournament_id: tournament.id, name: 'Final', stage: 'playoff', playoff_type: 'final', team1_id: null, team2_id: null, scheduled_at: getNextMatchDate(7), status: 'upcoming' },
+        ];
+        
+        const { data: newMatchesData, error: matchesError } = await supabase.from('matches').insert(matchesForDb).select();
+        
+        if (matchesError) {
+            console.error(matchesError);
+            alert("Failed to create playoff matches.");
+            return;
+        }
+        
+        const { error: tournamentError } = await supabase.from('tournaments').update({ stage: 'playoffs' }).match({ id: tournament.id });
+
+        if (tournamentError) {
+            console.error(tournamentError);
+            alert("Failed to update tournament stage. Rolling back created matches.");
+            const newMatchIds = newMatchesData.map(m => m.id);
+            await supabase.from('matches').delete().in('id', newMatchIds);
+            return;
+        }
+
+        const newMatches: Match[] = newMatchesData.map((m: any) => ({
+            id: m.id, name: m.name, stage: m.stage, playoffType: m.playoff_type, team1Id: m.team1_id, team2Id: m.team2_id, date: m.scheduled_at, status: m.status,
+        }));
+        
+        onUpdateTournament({ ...tournament, stage: 'playoffs', matches: [...tournament.matches, ...newMatches] });
+      }
+    });
   };
   
   // --- Render Logic ---
@@ -395,6 +625,8 @@ const TournamentDashboard: React.FC<TournamentDashboardProps> = ({ tournament, o
         onConfirm={confirmState.onConfirm}
         title={confirmState.title}
         message={confirmState.message}
+        confirmText={confirmState.confirmText}
+        confirmButtonClass={confirmState.confirmButtonClass}
       />
     </>
   );

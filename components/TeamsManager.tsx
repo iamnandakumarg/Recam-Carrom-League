@@ -97,6 +97,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
   // Add Group Modal State
   const [isGroupModalOpen, setGroupModalOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [groupError, setGroupError] = useState('');
   
   // Edit Group Modal State
   const [editGroupData, setEditGroupData] = useState<{id: string, name: string} | null>(null);
@@ -123,6 +124,10 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
 
   const handleAddTeam = () => {
     if (newTeamName.trim() && selectedGroupIdForNewTeam) {
+      if (teams.some(t => t.name.trim().toLowerCase() === newTeamName.trim().toLowerCase())) {
+        alert(`A team named "${newTeamName.trim()}" already exists.`);
+        return;
+      }
       const playerNames = [player1Name.trim(), player2Name.trim()].filter(name => name !== '');
       onAddTeam(newTeamName.trim(), selectedColor, selectedGroupIdForNewTeam, playerNames, newTeamLogo);
       setNewTeamName('');
@@ -167,16 +172,32 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
     }
   };
 
+  const handleOpenGroupModal = () => {
+    setNewGroupName('');
+    setGroupError('');
+    setGroupModalOpen(true);
+  };
+  
   const handleAddGroup = () => {
-    if (newGroupName.trim()) {
-      onAddGroup(newGroupName.trim());
-      setNewGroupName('');
-      setGroupModalOpen(false);
+    const trimmedName = newGroupName.trim();
+    if (!trimmedName) {
+      setGroupError("Group name cannot be empty.");
+      return;
     }
+    if (groups.some(g => g.name.trim().toLowerCase() === trimmedName.toLowerCase())) {
+      setGroupError(`A group named "${trimmedName}" already exists.`);
+      return;
+    }
+    onAddGroup(trimmedName);
+    setGroupModalOpen(false);
   };
 
   const handleSaveTeamChanges = () => {
     if (editTeamData && editedName.trim()) {
+        if (teams.some(t => t.id !== editTeamData.id && t.name.trim().toLowerCase() === editedName.trim().toLowerCase())) {
+            alert(`A team named "${editedName.trim()}" already exists.`);
+            return;
+        }
         const finalPlayers = editedPlayers.filter(p => p.name.trim() !== '');
         onEditTeam(editTeamData.id, {
             name: editedName.trim(),
@@ -204,6 +225,10 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
 
   const handleSaveGroupChanges = () => {
     if (editGroupData && editGroupData.name.trim()) {
+        if (groups.some(g => g.id !== editGroupData.id && g.name.trim().toLowerCase() === editGroupData.name.trim().toLowerCase())) {
+            alert(`A group named "${editGroupData.name.trim()}" already exists.`);
+            return;
+        }
         onEditGroup(editGroupData.id, editGroupData.name.trim());
         setEditGroupData(null);
     }
@@ -235,15 +260,31 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
 
             const newTeamsData: Array<{ groupName: string, teamName: string, playerNames: string[] }> = [];
             const errors: string[] = [];
+            
+            const existingTeamNames = new Set(teams.map(t => t.name.trim().toLowerCase()));
+            const newTeamNamesInFile = new Set<string>();
 
             json.forEach((row, index) => {
                 const groupName = row["Group Name"];
                 const teamName = row["Team Name"];
+                const trimmedTeamName = String(teamName || '').trim();
+                const lowerCaseTeamName = trimmedTeamName.toLowerCase();
 
-                if (!groupName || !teamName) {
+                if (!groupName || !trimmedTeamName) {
                     if (Object.keys(row).length > 0) errors.push(`Row ${index + 2}: Missing Group Name or Team Name.`);
                     return;
                 }
+                
+                if (existingTeamNames.has(lowerCaseTeamName)) {
+                    errors.push(`Row ${index + 2}: Team "${trimmedTeamName}" already exists in the tournament.`);
+                    return;
+                }
+                if (newTeamNamesInFile.has(lowerCaseTeamName)) {
+                    errors.push(`Row ${index + 2}: Team "${trimmedTeamName}" is duplicated within the file.`);
+                    return;
+                }
+                newTeamNamesInFile.add(lowerCaseTeamName);
+
 
                 const player1 = row["Player 1 Name (Optional)"] || '';
                 const player2 = row["Player 2 Name (Optional)"] || '';
@@ -251,7 +292,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
 
                 newTeamsData.push({
                     groupName: String(groupName).trim(),
-                    teamName: String(teamName).trim(),
+                    teamName: trimmedTeamName,
                     playerNames,
                 });
             });
@@ -262,10 +303,8 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
 
             if (errors.length > 0) {
                 alert(`Import complete with issues:\n- ${newTeamsData.length} teams processed.\n- ${errors.length} rows had errors:\n\n${errors.join('\n')}`);
-            } else if (newTeamsData.length > 0) {
-                alert(`${newTeamsData.length} teams imported successfully.`);
-            } else {
-                alert('No valid teams found to import. Please check the file and try again.');
+            } else if (newTeamsData.length === 0) {
+                alert('No valid new teams found to import. Please check the file and try again.');
             }
         } catch (error) {
             console.error("Error parsing file:", error);
@@ -292,7 +331,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
                     Upload
                 </button>
                 <button 
-                    onClick={() => setGroupModalOpen(true)}
+                    onClick={handleOpenGroupModal}
                     className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-4 rounded-lg transition-colors">
                     Add Group
                 </button>
@@ -414,6 +453,7 @@ const TeamsManager: React.FC<TeamsManagerProps> = ({ teams, groups, onAddTeam, o
       <Modal isOpen={isGroupModalOpen} onClose={() => setGroupModalOpen(false)} title="Add New Group">
         <div className="space-y-4">
             <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="Group Name (e.g., Group A)" className="w-full bg-gray-50 dark:bg-slate-700 text-slate-900 dark:text-slate-200 p-2 rounded border border-gray-300 dark:border-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"/>
+            {groupError && <p className="text-sm text-red-500 -mt-2">{groupError}</p>}
             <button onClick={handleAddGroup} className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-2 px-4 rounded-lg transition-colors">
                 Create Group
             </button>

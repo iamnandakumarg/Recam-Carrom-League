@@ -19,11 +19,8 @@ const CrownIcon = () => (
     </svg>
 );
 
-const TeamDisplay: React.FC<{ team: Team | undefined | 'TBD'; placeholder: string, winner?: boolean }> = ({ team, placeholder, winner }) => {
+const TeamDisplay: React.FC<{ team: Team | undefined; placeholder: string, winner?: boolean }> = ({ team, placeholder, winner }) => {
     if (!team) {
-        return <div className="font-bold text-lg text-gray-400 dark:text-gray-500">{placeholder}</div>;
-    }
-    if (team === 'TBD') {
         return <div className="font-bold text-lg text-gray-400 dark:text-gray-500">{placeholder}</div>;
     }
 
@@ -47,9 +44,8 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
     const [newMatchDate, setNewMatchDate] = useState('');
     const [newMatchTime, setNewMatchTime] = useState('');
 
-    const getTeam = (id: string | undefined): Team | 'TBD' | undefined => {
+    const getTeam = (id: string | undefined | null): Team | undefined => {
         if (!id) return undefined;
-        if (id === 'TBD') return 'TBD';
         return teams.find(t => t.id === id);
     };
 
@@ -68,7 +64,7 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
             return getTeam(playoffMatches.final.winnerId);
         }
         return null;
-    }, [tournament.stage, playoffMatches.final, getTeam]);
+    }, [tournament.stage, playoffMatches.final, teams]);
 
     const handleOpenResultModal = (match: Match) => {
         setSelectedMatch(match);
@@ -114,7 +110,7 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
 
         const team1 = getTeam(match.team1Id);
         const team2 = getTeam(match.team2Id);
-        const canStart = team1 !== 'TBD' && team2 !== 'TBD';
+        const canStart = !!team1 && !!team2;
 
         return (
             <div className={`bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md space-y-3 border-l-4 ${match.status === 'completed' ? 'border-green-500' : 'border-cyan-500'}`}>
@@ -144,7 +140,7 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                 )}
 
 
-                {match.status === 'inprogress' && team1 && team2 && typeof team1 !== 'string' && typeof team2 !== 'string' && (
+                {match.status === 'inprogress' && team1 && team2 && (
                     <div className="grid grid-cols-1 gap-4 bg-gray-50 dark:bg-slate-700/50 p-4 rounded-lg mt-4">
                         {[team1, team2].map(team => (
                             <div key={team.id}>
@@ -195,7 +191,7 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
         <div className="space-y-6">
             <h2 className="text-3xl font-bold text-cyan-600 dark:text-cyan-400">Playoffs Bracket</h2>
             
-            {tournamentWinner && typeof tournamentWinner !== 'string' && (
+            {tournamentWinner && (
                 <div className="bg-gradient-to-r from-amber-400 to-yellow-400 text-slate-800 p-6 rounded-xl shadow-lg flex flex-col items-center text-center space-y-2 border-2 border-amber-300">
                     <h3 className="text-2xl font-bold tracking-wider uppercase text-white drop-shadow">Tournament Champions!</h3>
                     <div className="font-bold text-3xl flex items-center text-white drop-shadow-sm">
@@ -205,7 +201,7 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                 </div>
             )}
 
-            <div className="flex flex-col lg:flex-row gap-8 items-center lg:items-start justify-between">
+            <div className="flex flex-col lg:flex-row gap-8 lg:gap-12 items-center lg:items-start justify-between">
                 {/* Round 1 */}
                 <div className="w-full lg:w-1/3 space-y-6">
                     <MatchCard match={playoffMatches.q1} />
@@ -248,12 +244,12 @@ const PlayoffsManager: React.FC<PlayoffsManagerProps> = ({ tournament, onUpdateM
                             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Winning Team</label>
                             <div className="mt-2 space-y-2">
                                <label className="flex items-center">
-                                   <input type="radio" name="winner" value={selectedMatch.team1Id} checked={winnerId === selectedMatch.team1Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
-                                   <span className="ml-2">{team1 && typeof team1 !== 'string' ? team1.name : ''}</span>
+                                   <input type="radio" name="winner" value={selectedMatch.team1Id ?? ''} checked={winnerId === selectedMatch.team1Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
+                                   <span className="ml-2">{team1 ? team1.name : ''}</span>
                                </label>
                                <label className="flex items-center">
-                                   <input type="radio" name="winner" value={selectedMatch.team2Id} checked={winnerId === selectedMatch.team2Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
-                                   <span className="ml-2">{team2 && typeof team2 !== 'string' ? team2.name : ''}</span>
+                                   <input type="radio" name="winner" value={selectedMatch.team2Id ?? ''} checked={winnerId === selectedMatch.team2Id} onChange={e => setWinnerId(e.target.value)} className="form-radio h-4 w-4 text-cyan-600"/>
+                                   <span className="ml-2">{team2 ? team2.name : ''}</span>
                                </label>
                             </div>
                             {winnerId && (
